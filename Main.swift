@@ -21,47 +21,64 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 50) {
-            Text("Auto Sync Vibe")
+            Text("Power Sync Vibe")
                 .font(.system(size: 30, weight: .black))
             
             Text(statusMessage)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
 
             Button(action: toggleMusicVibe) {
                 Circle()
                     .fill(isRunning ? Color.red : (audioPlayer == nil ? Color.gray : Color.blue))
-                    .frame(width: 130, height: 130)
+                    .frame(width: 140, height: 140)
                     .overlay(Text(isRunning ? "STOP" : "START").foregroundColor(.white).bold())
             }
             .disabled(audioPlayer == nil)
             
-            // 再読み込みボタン（ファイルを入れた後に押す用）
-            Button("ファイルを再スキャン") { setupAudio() }
-                .font(.footnote)
+            Button("ファイルを再読み込み") { setupAudio() }
         }
         .onAppear {
-            prepareHaptics()
             setupAudio()
+            prepareHaptics()
         }
     }
 
     func prepareHaptics() {
-        engine = try? CHHapticEngine()
-        try? engine?.start()
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+        
+        do {
+            // マナーモードでも振動させるためのオーディオセッション設定
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+            
+            engine = try CHHapticEngine()
+            // サーバーが停止しても自動再起動するように設定
+            engine?.resetHandler = {
+                try? self.engine?.start()
+            }
+            try engine?.start()
+        } catch {
+            print("Haptic Engine Error: \(error)")
+        }
     }
 
     func setupAudio() {
-        // アプリのDocumentsフォルダのパスを取得
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let url = docs.appendingPathComponent("music.mp3")
 
         if FileManager.default.fileExists(atPath: url.path) {
-            audioPlayer = try? AVAudioPlayer(contentsOf: url)
-            audioPlayer?.prepareToPlay()
-            statusMessage = "music.mp3 を認識しました"
+            do {
+                audioPlayer = try AVAudioPlayer(contentsOf: url)
+                audioPlayer?.isMeteringEnabled = true
+                audioPlayer?.prepareToPlay()
+                statusMessage = "music.mp3 を認識しました\n(マナーモードを解除して試してね)"
+            } catch {
+                statusMessage = "読み込み失敗: \(error.localizedDescription)"
+            }
         } else {
-            statusMessage = "ファイルが見つかりません:\nDocuments/music.mp3"
+            statusMessage = "ファイルなし: Documents/music.mp3"
         }
     }
 
@@ -70,26 +87,37 @@ struct ContentView: View {
     }
 
     func startAll() {
-        guard let ap = audioPlayer else { return }
+        guard let ap = audioPlayer, let eng = engine else { return }
+        
+        try? eng.start()
         isRunning = true
-        ap.isMeteringEnabled = true
+        ap.currentTime = 0
         ap.play()
         
-        let event = CHHapticEvent(eventType: .hapticContinuous, parameters: [
-            CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.5),
-            CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5)
-        ], relativeTime: 0, duration: 1000)
+        // 連続振動イベントを作成
+        let intensity = CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.5)
+        let sharpness = CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5)
+        let event = CHHapticEvent(eventType: .hapticContinuous, parameters: [intensity, sharpness], relativeTime: 0, duration: 3600) // 1時間
         
-        guard let pattern = try? CHHapticPattern(events: [event], parameters: []) else { return }
-        player = try? engine?.makeAdvancedPlayer(with: pattern)
-        try? player?.start(atTime: 0)
+        do {
+            let pattern = try CHHapticPattern(events: [event], parameters: [])
+            player = try eng.makeAdvancedPlayer(with: pattern)
+            try player?.start(atTime: 0)
+        } catch {
+            print("Haptic Play Error: \(error)")
+        }
 
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             ap.updateMeters()
             let level = ap.averagePower(forChannel: 0)
-            let normalizedLevel = max(0.1, min(1.0, (Float(level) + 40) / 40))
+            
+            // 感度を大幅にアップ（-35dB〜0dBを 0.1〜1.0に変換）
+            let power = max(0, (Float(level) + 35) / 35)
+            let normalizedLevel = min(1.0, max(0.1, power))
+            
             let iControl = CHHapticDynamicParameter(parameterID: .hapticIntensityControl, value: normalizedLevel, relativeTime: 0)
-            try? player?.sendParameters([iControl], atTime: 0)
+            let sControl = CHHapticDynamicParameter(parameterID: .hapticSharpnessControl, value: normalizedLevel, relativeTime: 0)
+            try? player?.sendParameters([iControl, sControl], atTime: 0)
         }
     }
 
@@ -98,5 +126,6 @@ struct ContentView: View {
         audioPlayer?.stop()
         timer?.invalidate()
         try? player?.stop(atTime: 0)
+        player = nil
     }
 }
