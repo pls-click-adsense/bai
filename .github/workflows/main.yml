@@ -2,38 +2,34 @@ name: Build Vibe IPA
 
 on:
   push:
-    branches: [ "main", "master" ]  # mainかmasterにpushされたら自動実行
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:  # これを入れるとGitHubのActionsタブから手動で実行できる
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: 'latest-stable'
 
       - name: Build and Package
         run: |
           mkdir -p Payload/MyVibeApp.app
 
-          # コンパイル
+          # SDKパスの取得とコンパイル
+          # -parse-as-library で @main エラーを回避
           xcrun -sdk iphoneos swiftc \
             -target arm64-apple-ios15.0 \
             -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
+            -parse-as-library \
             Main.swift \
             -o Payload/MyVibeApp.app/MyVibeApp \
             -emit-executable
 
-          # 最小限の Info.plist
+          # 最小限の Info.plist 生成
           cat <<EOF > Payload/MyVibeApp.app/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key> <string>MyVibeApp</string>
@@ -49,7 +45,7 @@ jobs:
           </plist>
           EOF
 
-          # IPA作成
+          # IPAとして固める
           zip -r MyVibeApp.ipa Payload
 
       - name: Upload Artifact
