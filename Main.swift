@@ -27,32 +27,40 @@ struct ContentView: View {
                 .font(.system(size: 28, weight: .black, design: .rounded))
             
             VStack {
-                Image(systemName: "music.note.list")
-                    .font(.system(size: 60))
-                    .foregroundColor(.blue)
+                Image(systemName: "music.quaver.app.fill")
+                    .font(.system(size: 80))
+                    .foregroundColor(.pink)
                 Text(fileName)
-                    .font(.caption)
-                    .lineLimit(1)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
                     .padding()
             }
 
             Button(action: { showPicker = true }) {
-                Label("ファイルを選択", systemImage: "doc.badge.plus")
+                Label("曲を読み込む", systemImage: "plus.circle.fill")
+                    .font(.headline)
                     .padding()
                     .frame(maxWidth: .infinity)
-                    .background(Color.gray.opacity(0.2))
-                    .cornerRadius(10)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(15)
             }
             .padding(.horizontal)
 
+            Spacer()
+
             Button(action: toggleMusicVibe) {
-                Circle()
-                    .fill(isRunning ? Color.red : (audioPlayer == nil ? Color.gray : Color.blue))
-                    .frame(width: 120, height: 120)
-                    .overlay(Text(isRunning ? "STOP" : "PLAY").foregroundColor(.white).bold())
-                    .shadow(radius: 10)
+                ZStack {
+                    Circle()
+                        .fill(isRunning ? Color.red : (audioPlayer == nil ? Color.gray : Color.blue))
+                        .frame(width: 140, height: 140)
+                    Text(isRunning ? "STOP" : "START")
+                        .foregroundColor(.white)
+                        .font(.title2).bold()
+                }
+                .shadow(radius: 15)
             }
             .disabled(audioPlayer == nil)
+            .padding(.bottom, 60)
         }
         .sheet(isPresented: $showPicker) {
             DocumentPicker(audioPlayer: $audioPlayer, fileName: $fileName)
@@ -67,11 +75,7 @@ struct ContentView: View {
     }
 
     func toggleMusicVibe() {
-        if isRunning {
-            stopAll()
-        } else {
-            startAll()
-        }
+        if isRunning { stopAll() } else { startAll() }
     }
 
     func startAll() {
@@ -84,14 +88,20 @@ struct ContentView: View {
         let sharpness = CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5)
         let event = CHHapticEvent(eventType: .hapticContinuous, parameters: [intensity, sharpness], relativeTime: 0, duration: 1000)
         
-        let pattern = try? CHHapticPattern(events: [event], parameters: [])
-        player = try? engine?.makeAdvancedPlayer(with: pattern)
-        try? player?.start(atTime: 0)
+        // 修正ポイント：安全にアンラップ
+        guard let pattern = try? CHHapticPattern(events: [event], parameters: []) else { return }
+        
+        do {
+            player = try engine?.makeAdvancedPlayer(with: pattern)
+            try player?.start(atTime: 0)
+        } catch {
+            print("Haptic Error: \(error)")
+        }
 
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             ap.updateMeters()
             let level = ap.averagePower(forChannel: 0)
-            // 音量感度調整：ここの数値をいじると振動のノリが変わるよ
+            // 感度調整 (-40dBを基準に正規化)
             let normalizedLevel = max(0.1, min(1.0, (Float(level) + 40) / 40))
             let iControl = CHHapticDynamicParameter(parameterID: .hapticIntensityControl, value: normalizedLevel, relativeTime: 0)
             try? player?.sendParameters([iControl], atTime: 0)
@@ -107,7 +117,6 @@ struct ContentView: View {
     }
 }
 
-// ファイル選択用のピッカー
 struct DocumentPicker: UIViewControllerRepresentable {
     @Binding var audioPlayer: AVAudioPlayer?
     @Binding var fileName: String
@@ -119,10 +128,7 @@ struct DocumentPicker: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     class Coordinator: NSObject, UIDocumentPickerDelegate {
         var parent: DocumentPicker
@@ -130,11 +136,9 @@ struct DocumentPicker: UIViewControllerRepresentable {
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             guard let url = urls.first else { return }
-            // セキュリティ上のアクセス許可
             if url.startAccessingSecurityScopedResource() {
                 parent.audioPlayer = try? AVAudioPlayer(contentsOf: url)
                 parent.fileName = url.lastPathComponent
-                // url.stopAccessingSecurityScopedResource() // 再生中に止めるとエラーになるので注意
             }
         }
     }
