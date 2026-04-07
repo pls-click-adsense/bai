@@ -2,41 +2,54 @@ name: Build Vibe IPA
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main", "master" ]  # mainかmasterにpushされたら自動実行
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:  # これを入れるとGitHubのActionsタブから手動で実行できる
 
 jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Compile and Package
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 'latest-stable'
+
+      - name: Build and Package
         run: |
-          # 1. 作業ディレクトリ作成
           mkdir -p Payload/MyVibeApp.app
 
-          # 2. Swiftファイルのコンパイル (簡易的なビルド)
-          # 本来はSDK指定などが必要だが、最小構成なら swiftc でバイナリを作成
-          xcrun -sdk iphoneos swiftc -target arm64-apple-ios15.0 \
-            Main.swift -o Payload/MyVibeApp.app/MyVibeApp \
+          # コンパイル
+          xcrun -sdk iphoneos swiftc \
+            -target arm64-apple-ios15.0 \
+            -sdk $(xcrun --sdk iphoneos --show-sdk-path) \
+            Main.swift \
+            -o Payload/MyVibeApp.app/MyVibeApp \
             -emit-executable
 
-          # 3. 最小限の Info.plist 生成 (これがないとiPhoneで開けない)
+          # 最小限の Info.plist
           cat <<EOF > Payload/MyVibeApp.app/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key> <string>MyVibeApp</string>
-              <key>CFBundleIdentifier</key> <string>com.yourname.vibe</string>
+              <key>CFBundleIdentifier</key> <string>com.selfmade.vibe</string>
               <key>CFBundleName</key> <string>VibeApp</string>
               <key>CFBundlePackageType</key> <string>APPL</string>
               <key>CFBundleShortVersionString</key> <string>1.0</string>
+              <key>CFBundleVersion</key> <string>1</string>
+              <key>LSRequiresIPhoneOS</key> <true/>
+              <key>MinimumOSVersion</key> <string>15.0</string>
+              <key>UILaunchScreen</key> <dict/>
           </dict>
           </plist>
           EOF
 
-          # 4. IPA化 (zip圧縮して拡張子変更)
+          # IPA作成
           zip -r MyVibeApp.ipa Payload
 
       - name: Upload Artifact
